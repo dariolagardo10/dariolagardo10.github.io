@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora de Costo de Transporte</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        #map {
+            height: 70vh; /* Altura del mapa */
+            width: 100%; /* Ancho del mapa */
+        }
+        .container {
+            padding: 20px;
+        }
+        input, select {
+            width: 100%;
+            margin: 10px 0;
+            padding: 10px;
+        }
+        #resultado {
+            margin-top: 20px;
+        }
+        .costo-tarifa {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+        .tarjeta {
+            flex: 1;
+            margin: 0 10px;
+        }
+    </style>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC2cPyC7h1emIUPYHmjq8TBrWZx7YGUisw&libraries=places,drawing&callback=initMap" async defer></script>
+    <script>
+        let map;
+        let originMarker;
+        let destinationMarker;
+        let originLocation;
+        let destinationLocation;
+        let directionsService;
+        let directionsRenderer;
+
+        function initMap() {
+            const posadas = { lat: -27.3672, lng: -55.8969 }; // Posadas, Misiones
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 15,
+                center: posadas
+            });
+
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer();
+            directionsRenderer.setMap(map);
+
+            // Obtener ubicación actual
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((position) => {
+                    originLocation = new google.maps.LatLng(position.coords.latitude, position.coords.longitude);
+                    placeOriginMarker(originLocation);
+                    map.setCenter(originLocation);
+                    getPlaceName(originLocation);
+                });
+            }
+
+            const destinationAutocomplete = new google.maps.places.Autocomplete(document.getElementById('destino'), { componentRestrictions: { country: 'AR' } });
+            destinationAutocomplete.addListener('place_changed', () => {
+                const place = destinationAutocomplete.getPlace();
+                if (place.geometry) {
+                    destinationLocation = place.geometry.location;
+                    document.getElementById('destino').value = place.formatted_address;
+                    placeDestinationMarker(destinationLocation);
+                    calcularDistancia(); // Calcular distancia al cambiar destino
+                }
+            });
+
+            map.addListener('click', (event) => {
+                originLocation = event.latLng;
+                placeOriginMarker(originLocation);
+                getPlaceName(originLocation);
+            });
+        }
+
+        function placeOriginMarker(location) {
+            if (originMarker) {
+                originMarker.setMap(null);
+            }
+            originMarker = new google.maps.Marker({
+                position: location,
+                map: map,
+                title: 'Punto de Partida'
+            });
+            calcularDistancia(); // Calcular distancia al establecer origen
+        }
+
+        function placeDestinationMarker(location) {
+            if (destinationMarker) {
+                destinationMarker.setMap(null);
+            }
+            destinationMarker = new google.maps.Marker({
+                position: location,
+                map: map,
+                title: 'Punto de Llegada'
+            });
+        }
+
+        function getPlaceName(location) {
+            const geocoder = new google.maps.Geocoder();
+            geocoder.geocode({ location: location }, (results, status) => {
+                if (status === google.maps.GeocoderStatus.OK && results[0]) {
+                    const address = results[0].formatted_address;
+                    document.getElementById('origen').value = address;
+                    calcularDistancia(); // Calcular distancia al determinar dirección
+                } else {
+                    document.getElementById('origen').value = 'No se pudo determinar la ubicación';
+                }
+            });
+        }
+
+        function calcularDistancia() {
+            const origen = document.getElementById("origen").value;
+            const destino = document.getElementById("destino").value;
+            const selectedMode = document.getElementById("modoTransporte").value;
+
+            if (!origen || !destino) {
+                document.getElementById("resultado").innerHTML = 'Debes seleccionar tanto el punto de partida como el punto de llegada.';
+                return;
+            }
+
+            const request = {
+                origin: origen,
+                destination: destino,
+                travelMode: google.maps.TravelMode.DRIVING
+            };
+
+            directionsService.route(request, function (result, status) {
+                if (status === 'OK') {
+                    directionsRenderer.setDirections(result);
+                    const distancia = result.routes[0].legs[0].distance.value / 1000; // km
+                    const duracion = result.routes[0].legs[0].duration.text;
+
+                    const cuadras = Math.ceil(distancia * 10); // Calcular en cuadras
+                    let taxiCosto = calcularCosto(cuadras, 'TAXI');
+                    let remisCosto = calcularCosto(cuadras, 'REMIS');
+
+                    const mensaje = `La distancia es: ${distancia.toFixed(2)} km<br>El tiempo estimado de llegada es: ${duracion}`;
+                    document.getElementById("resultado").innerHTML = mensaje;
+
+                    mostrarCostos(taxiCosto, remisCosto);
+                } else {
+                    document.getElementById("resultado").innerHTML = 'Error al calcular la distancia, verificar punto de inicio / punto de llegada';
+                }
+            });
+        }
+
+        function calcularCosto(cuadras, tipo) {
+            let costo;
+            let factorTarifa = 1.0;
+
+            // Obtener la hora actual y el día de la semana
+            const horaActual = new Date().getHours();
+            const diaDeLaSemana = new Date().getDay();
+
+            if (tipo === "TAXI") {
+                costo = (cuadras * 50) + 500; // Costo base para taxi
+                if (horaActual >= 20 || horaActual < 6) {
+                    factorTarifa = 1.2; // Recargo noche
+                }
+                if (diaDeLaSemana === 0 || diaDeLaSemana === 6) {
+                    factorTarifa += 0.15; // Recargo fin de semana
+                }
+            } else if (tipo === "REMIS") {
+                costo = (cuadras * 70) + 300; // Costo base para remis
+                if (horaActual >= 20 || horaActual < 6) {
+                    factorTarifa = 1.1; // Recargo noche
+                }
+                if (diaDeLaSemana === 0 || diaDeLaSemana === 6) {
+                    factorTarifa += 0.10; // Recargo fin de semana
+                }
+            }
+
+            return costo * factorTarifa;
+        }
+
+        function mostrarCostos(taxiCosto, remisCosto) {
+            document.getElementById("costoTaxi").innerHTML = `Costo Taxi: ${taxiCosto.toFixed(2)} $`;
+            document.getElementById("costoRemis").innerHTML = `Costo Remis: ${remisCosto.toFixed(2)} $`;
+        }
+
+        document.addEventListener("DOMContentLoaded", function() {
+            // Añadir evento de cambio para recalcular costo
+            document.getElementById("modoTransporte").addEventListener("change", () => {
+                calcularDistancia(); // Recalcula la distancia al cambiar el transporte
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>Calculadora de Costo de Transporte</h1>
+        <div id="map"></div>
+        
+        <label for="origen">Punto de partida:</label>
+        <input type="text" id="origen" placeholder="Selecciona el punto de partida" readonly>
+
+        <label for="destino">Punto de llegada:</label>
+        <input type="text" id="destino" placeholder="Ingresa el punto de llegada">
+
+        <label for="modoTransporte">Tipo de Transporte:</label>
+        <select id="modoTransporte">
+            <option value="">Seleccione medio de Transporte</option>
+            <option value="TAXI">Taxi</option>
+            <option value="REMIS">Remis</option>
+        </select>
+
+        <div id="resultado"></div>
+
+        <div class="costo-tarifa">
+            <div class="tarjeta card text-white bg-primary">
+                <div class="card-body">
+                    <h5 class="card-title">Taxi</h5>
+                    <p id="costoTaxi">Costo Taxi: - $</p>
+                </div>
+            </div>
+            <div class="tarjeta card text-white bg-success">
+                <div class="card-body">
+                    <h5 class="card-title">Remis</h5>
+                    <p id="costoRemis">Costo Remis: - $</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
